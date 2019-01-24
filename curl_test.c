@@ -19,7 +19,7 @@ int main(int argc, char **argv)
             \"btype\":\"01\",\
             \"channelid\":\"IC\",\
             \"idname\":\"?M㈡~V规~X~N\",\
-            \"idno\":\"320681198706280211\"\,\
+            \"idno\":\"320681198706280211\",\
             \"accesskey\":\"957971E9222B1D46D8059252711E0E50\"\
         }\
     }";
