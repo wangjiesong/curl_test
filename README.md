@@ -238,3 +238,114 @@ int main( int argc, char *argv[])
    }
 }
 ```
+
+#### Printing
+libcurl:
+```c
+#include <curl/curl.h>
+/*回调函数 将服务方返回的http报文体json考出*/
+size_t write_rcv_data(void *ptr, size_t size, size_t nmemb, void *stream)
+{
+	  struct {
+    	int  buf_max_len;
+    	int  buf_now_len;
+    	char * data_buf;
+    } * rcv_data_struct=ptr;
+    
+    if ( rcv_data_struct->buf_now_len + size*nmemb  > rcv_data_struct->buf_max_len ) 
+    	return 0;
+    memcpy(rcv_data_struct->data_buf+rcv_data_struct->buf_now_len, (char *)ptr,size*nmemb);
+    rcv_data_struct->buf_now_len+=size*nmemb;
+    return size*nmemb;
+}
+
+/*消费方微服务框架函数封装,网络通信及http协议报文解析交有curl完成*/
+int my_curl_easy_perform( char * service_id, char * send_data,int send_len, char * rcv_data,  int * rcv_len  ){
+  
+    
+    char url[256]=""; /*例"http://10.12.2.8:7902/open/check.ashx"*/  
+	  struct {
+    	int  buf_max_len;
+    	int  buf_now_len;
+    	char * data_buf;
+    } rcv_data_struct;
+    
+    rcv_data_struct.buf_max_len=rcv_len;
+    rcv_data_struct.buf_now_len=0;
+    rcv_data_struct.data_buf=rcv_data;
+
+    /*一些curl初始化*/
+    CURL *easy_handle = curl_easy_init();/*easy句柄初始化*/
+    /*发送报文send_data绑定到easy_handle*/
+    curl_easy_setopt(easy_handle, CURLOPT_POSTFIELDS, send_data);
+    /*设定返回报文的存放位置rcv_data_struct, 以及获取返回报文的回调函数write_rcv_data*/
+    curl_easy_setopt(easy_handle,CURLOPT_WRITEFUNCTION,write_rcv_data);
+    curl_easy_setopt(easy_handle, CURLOPT_WRITEDATA, &rcv_data_struct );
+    
+    /*a.检测及(如未启动)启动zk订阅线程*/
+    if( check_startup_zkthread() != 0)
+    	goto ERROR;
+    
+    /*b.服务寻址：
+      检测服务目录缓存是否已存有service_id的ip/端口等url信息,
+      如果存有则直接使用,如果无则通知zk线程从zookeeper注册中心获取*/
+    if( get_service_addr(service_id,url)!=0)
+    	goto ERROR;
+    
+	  /*c.流控及监控数据推送*/
+	  if(floodcrl_monitorpush(easy_handle,url)!=0 )
+	  	goto ERROR;
+	  
+	  /*d.连接服务方发送交易报文,并接收返回*/
+	  curl_easy_setopt(easy_handle, CURLOPT_URL, url);/*指定服务地址URL*/
+	  if( curl_easy_perform( easy_handle )!=0)
+	  	goto ERROR;
+	  
+	  /*正确返回*/
+    curl_easy_cleanup(easy_handle);
+	  *rcv_len=rcv_data_struct.buf_now_len;
+	  return OK;
+	  
+	  /*错误返回*/
+	  ERROR:
+	  	write_log(...);
+	  	curl_easy_cleanup(easy_handle);
+	  	*rcv_len=0;
+	  	return ERROR;
+}
+
+int main(int argc, char **argv)
+{
+    int rt=0;
+    char rcv_data[8192];
+    char rcv_len;
+    char service_id="checke_identification";
+    char send_data[8192]="datajson=\
+    {\
+        \"action\":\"checkid\",\
+        \"params\":\{\
+            \"localonly\":1,\
+            \"btype\":\"01\",\
+            \"channelid\":\"IC\",\
+            \"idname\":\"?M㈡~V规~X~N\",\
+            \"idno\":\"320681198706280211\",\
+            \"accesskey\":\"957971E9222B1D46D8059252711E0E50\"\
+        }\
+    }";
+
+    /*1 全局初始化 进程启动时调用 多线程环境下只能调用一次*/
+    rt = curl_global_init(CURL_GLOBAL_ALL);
+    
+    /*2 交易组报文(略),json报文保存在send_data*/
+    
+    /*3 服务调用*/
+    rt = my_curl_easy_perform(service_id,send_data,strlen(send_data), rcv_data, &rcv_len );
+
+    /*4 交易解报文及后继业务处理(略)，返回的json报文保存在rcv_data，报文长度rcv_len*/
+
+    /*5 全局清理 进程退出调用 多线程环境只调用一次*/
+    curl_global_cleanup();
+
+    return 0;
+}
+```
